@@ -1,0 +1,170 @@
+function sysCall_init() 
+    
+    mobileRob=sim.getObject('.') -- the handle of the mobilerob "Pioneer_p3dx"
+    motorLeft=sim.getObjectHandle("Pioneer_p3dx_leftMotor") -- Handle of the left motor
+    motorRight=sim.getObjectHandle("Pioneer_p3dx_rightMotor") -- Handle of the right motor
+    
+    leftSensor=sim.getObjectHandle("LeftSensor") -- Handle of the left IR sensor
+    middleSensor=sim.getObjectHandle("MiddleSensor") -- Handle of the middle IR sensor
+    rightSensor=sim.getObjectHandle("RightSensor") -- Handle of the right IR sensor
+    
+    ultrasonicFront4=sim.getObjectHandle("Pioneer_p3dx_ultrasonicSensor4")
+    ultrasonicRight=sim.getObjectHandle("Pioneer_p3dx_ultrasonicSensor8")
+    ultrasonicFront5=sim.getObjectHandle("Pioneer_p3dx_ultrasonicSensor5")
+    ultrasonicFront3=sim.getObjectHandle("Pioneer_p3dx_ultrasonicSensor3")
+    ultrasonicFront6=sim.getObjectHandle("Pioneer_p3dx_ultrasonicSensor6")
+    ultrasonicFront6=sim.getObjectHandle("Pioneer_p3dx_ultrasonicSensor2")
+    ultrasonicFront6=sim.getObjectHandle("Pioneer_p3dx_ultrasonicSensor7")
+    
+    setSpeed=100*math.pi/180 -- the max running speed; will slow down when making turns (how about 100, 300, 500)
+    
+    robotTrace=sim.addDrawingObject(sim.drawing_linestrip+sim.drawing_cyclic,2,0,-1,200,{1,1,0}) -- the mobileRob moving trace
+    
+    avoidanceState = 0  -- 0: normal line following, 1: turn left, 2: turn right
+    blacklineState = 1
+    avoidanceTimer = 0
+    turnRightDuration = 2
+    goStraightDuration = 1.5
+    
+end
+
+
+function sysCall_sensing()
+    local p=sim.getObjectPosition(mobileRob,-1)
+    sim.addDrawingObjectItem(robotTrace,p)
+end 
+
+function readUltrasonicSensorFront3()
+    local detected, distance = sim.readProximitySensor(ultrasonicFront3)
+    return detected, distance
+end
+
+function readUltrasonicSensorFront4()
+    local detected, distance = sim.readProximitySensor(ultrasonicFront4)
+    return detected, distance
+end
+
+function readUltrasonicSensorFront5()
+    local detected, distance = sim.readProximitySensor(ultrasonicFront5)
+    return detected, distance
+end
+
+function readUltrasonicSensorFront6()
+    local detected, distance = sim.readProximitySensor(ultrasonicFront6)
+    return detected, distance
+end
+
+function sysCall_actuation()
+
+    local detectedFront3, objectDistanceFront3 = readUltrasonicSensorFront3()
+    local detectedFront4, objectDistanceFront4 = readUltrasonicSensorFront4()
+    local detectedFront5, objectDistanceFront5 = readUltrasonicSensorFront5()
+    local detectedFront6, objectDistanceFront6 = readUltrasonicSensorFront6()
+    
+    -- These lines read sensors from robot.
+    sensorReading={false,false,false}
+    sensorReading[1]=(sim.readVisionSensor(leftSensor)) -- Left IR sensor 
+    sensorReading[2]=(sim.readVisionSensor(middleSensor)) -- Middle IR sensor
+    sensorReading[3]=(sim.readVisionSensor(rightSensor)) -- -- Right IR sensor
+   
+    --- Line tracking according to IR sensor readings
+    vLeft=setSpeed -- Default to move forward
+    vRight=setSpeed
+    local dt = sim.getSimulationTimeStep()
+    local targetDistance = 0.2
+    
+    if (detectedFront4 == 1 and avoidanceState == 0 and (targetDistance - objectDistanceFront4) >= 0) then
+        blacklineState = 0
+        avoidanceState = 1
+        avoidanceTimer = 0
+    elseif (detectedFront5 == 1 and avoidanceState == 0 and (targetDistance - objectDistanceFront5) >= 0) then
+        blacklineState = 0
+        avoidanceState = 1
+        avoidanceTimer = 0
+    elseif (detectedFront3 == 1 and avoidanceState == 0 and (targetDistance - objectDistanceFront3) >= 0) then
+        blacklineState = 0
+        avoidanceState = 1
+        avoidanceTimer = 0
+    elseif (detectedFront6 == 1 and avoidanceState == 0 and (targetDistance - objectDistanceFront6) >= 0) then
+        blacklineState = 0
+        avoidanceState = 1
+        avoidanceTimer = 0
+    elseif (blacklineState == 1) then
+        if (sensorReading[3]~=0) then -- Right sensor is out of the line; Turn left
+            vLeft=vLeft*0.05
+        end
+        if (sensorReading[1]~=0) then -- left sensor is out of the line;Turn right
+            vRight=vRight*0.05
+        end
+    end
+    
+    if (avoidanceState == 1) then 
+        local rightDetected = sim.readProximitySensor(ultrasonicRight)
+        vLeft = -setSpeed * 0.4
+        vRight = setSpeed * 0.4
+        
+        if (rightDetected == 1) then
+            avoidanceState = 2
+        end
+        
+    elseif avoidanceState == 2 then
+        vLeft = setSpeed 
+        vRight = setSpeed
+        
+        avoidanceTimer = avoidanceTimer + dt
+        if avoidanceTimer >= goStraightDuration then
+            avoidanceState = 3
+            avoidanceTimer = 0
+        end
+        
+    elseif avoidanceState == 3 then
+        local rightResult, rightDistance = sim.readProximitySensor(ultrasonicRight)
+        local kp = 3.0
+        local targetDistanceForTurn = 0.1
+        
+        if (rightResult == 1 and rightDistance ~= nil) then
+            local error_val = targetDistanceForTurn - rightDistance
+            local turnAdjustment = kp * error_val
+        
+            turnAdjustment = math.max(-0.5, math.min(0.5, turnAdjustment))
+        
+            vLeft = setSpeed * (1 - turnAdjustment)
+            vRight = setSpeed * (1 + turnAdjustment)
+        
+        else 
+            vLeft = setSpeed * 0.8
+            vRight = setSpeed * 0.4
+        end
+        
+        if (sensorReading[2] == 0) then
+            avoidanceState = 4
+            avoidanceTimer = 0
+        end
+    
+    elseif avoidanceState == 4 then
+        vLeft = setSpeed * 0.3
+        vRight = setSpeed
+        
+        avoidanceTimer = avoidanceTimer + dt
+        if avoidanceTimer >= turnRightDuration then
+            if (sensorReading[2] ~= 0) then
+                vLeft = setSpeed 
+                vRight = setSpeed * 0.3
+            else 
+                blacklineState = 1
+                avoidanceState = 0
+                avoidanceTimer = 0
+            end
+        end
+    end
+
+    -- Rolling!
+    sim.setJointTargetVelocity(motorLeft, vLeft)
+    sim.setJointTargetVelocity(motorRight, vRight)
+
+end 
+
+
+function sysCall_cleanup() 
+ 
+end 
